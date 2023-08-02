@@ -1,0 +1,1310 @@
+---
+title: "The /t/ release in Jutland Danish. Decomposing the spectrum with functional PCA"
+author: 
+  - name:
+      given: 'Rasmus'
+      family: 'Puggaard-Rode'
+    affiliations:
+      name: 'Institute for Phonetics and Speech Processing, <br> Ludwig Maximilian University, Munich'
+    email: 'mailto:r.puggaard@phonetik.uni-muenchen.de'
+    orcid: '0000-0003-4522-9987'
+date: today
+format:
+  html:
+    theme: cosmo
+    code-fold: true
+    toc: true
+    toc-location: left
+    reference-location: margin
+    df-print: kable
+  pdf: default
+bibliography: references.bib
+csl: css/journal-of-linguistics.csl
+number-sections: true
+citation:
+  type: article-journal
+  container-title: Proceedings of the International Congress of Phonetic Sciences
+  volume: 20
+abstract: >
+  This study concerns variation in the realization of /t/ in Danish. /t/ is prominently affricated in Modern Standard Danish, but affrication is known to have been missing in some of the regional varieties that used to be spoken in Jutland. It remains unclear exactly which varieties lacked affrication. Due to relatively recent major changes in language policy and mobility, the traditional Danish dialect landscape has undergone rapid levelling, so we explore this problem using a large corpus of recordings of elderly speakers from the 1970s. We propose using the functional extension of principal component analysis to decompose the sources of spectral variance in stop release midpoints, and use the results as a proxy for determining affrication status. We find that /t/ affrication was limited to parts of eastern Jutland, perhaps due to early adaptation of the feature in some of the area's largest cities.
+---
+
+::: {.callout-note collapse="true"}
+## What's this?
+
+This is a so-called ‘callout block’. You'll find them spread throughout the text. The text is otherwise identical to the version published in the *ICPhS* proceedings, except it uses the colorful versions of plots that were used in my *ICPhS* presentation. The callout blocks mostly contain software-specific technical details about how the analysis was implemented, how plots were generated etc in the R language -- generally along with explanations in prose about what the individual commands do and how they work. Sometimes they just contain additional technical details. In several cases they contain plots and details that were part of the presentation at *ICPhS*, but were not part of the proceedings paper. Instead of placing all this in a repository separate from the manuscript, this is an attempt to incorporate it directly into the paper, so that looking up technical details is as easy and simple as possible. This particular paper has a lot of technical detail in very little space, making it potentially very handy to be able to look up the implementation details.
+
+The main analysis for this paper was done in early 2022. The analysis was included in my dissertation [@puggaardrode2023_diss], and analysis data and code are already published [see @disscode]. The analysis code presented here is substantially the same, but my R skills have significantly improved since, so the code has been updated or rewritten for improved legibility. If you are interested in reproducing the specific grayscale plots from the proceedings paper, please consult @disscode.
+
+:::
+
+# Introduction
+
+The aims of this study are twofold: 1) to explore the geographical distribution of (missing) /t/ affrication in traditional varieties of Jutland Danish (see @fig-mapDK), and 2) to explore the use of functional principal component analysis [FPCA, @gubian2015] for compressing the information in speech spectra into a small number of easily interpretable discrete variables.
+
+::: {.callout-note collapse="true"}
+## Generating the map in @fig-mapDK
+
+@fig-mapDK shows Denmark and its immediate neighbors, and colors in some important landmarks. In order to make this map natively in R, we load in the packages `tidyverse` (which will be used for data manipulation and plotting throughout the paper), `patchwork`, and `eurostat`. `eurostat` provides wrappers for loading Eurostat data into R, including e.g. coordinates for select countries with the `get_eurostat_geospatial()` function as below. I set `resolution = '1'` to get the highest possible resolution. `nuts_level` refers to Eurostat's NUTS level (**n**omenclature of **t**erritorial **u**nits for **s**tatistics, and I agree -- that's not a very satisfying abbreviation). The `nuts_level` determines the granularity of the regions that maps are divided into. `3` is the right granularity here -- `2` would give us the official regions of Denmark, which would not allow us to easily separate Jutland from the rest of the country.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(patchwork)
+library(eurostat)
+
+geodata <- get_eurostat_geospatial(resolution = '1', nuts_level = 3)
+```
+
+Coordinates for specific countries can then be accessed by filtering the resulting `geodata` object by the country codes that are stored in `geodata$CNTR_CODE`. I'll grab the data for Denmark, Germany, and Sweden, so I can show where Denmark is located relative to the bordering countries. Each of these filtered objects will include coordinate data sorted into regions by NUTS unit. I further split the Danish coordinates into the NUTS units belonging to Jutland and those not belonging to Jutland. 
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+geodataDK <- geodata[geodata$CNTR_CODE=='DK',]
+geodataDE <- geodata[geodata$CNTR_CODE=='DE',]
+geodataSE <- geodata[geodata$CNTR_CODE=='SE',]
+jut_areas <- c('Sydjylland', 'Vestjylland', 'Nordjylland', 'Østjylland')
+jutland <- geodataDK[geodataDK$NUTS_NAME %in% jut_areas,]
+restofDK <- geodataDK[!geodataDK$NUTS_NAME %in% jut_areas,]
+```
+
+The following bit of code then generates the map. The map bits are added individually with `geom_sf()`, making Jutland yellow, and the rest of Denmark light green, and the other countries light grey. Text annotations are added with `annotate()`, putting in proper coordinates manually, and `xlim()` and `ylim()` are set to include only Denmark (excluding the islands of Bornholm and Christiansø, which are not of interest in this study and which are quite far removed from the rest of the country). `theme()` options are used to remove most of the regular `ggplot()` junk which we don't really need here, and also to turn the background light blue to make it clear what is and what isn't ocean.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+mapDK <- ggplot() + 
+  geom_sf(data=jutland, fill='yellow') +
+  geom_sf(data=restofDK, fill='lightgreen') + 
+  geom_sf(data=geodataDE, fill='lightgrey') +
+  geom_sf(data=geodataSE, fill='lightgrey') + 
+  annotate(geom='text', x=8.7, y=57.5, label='Jutland\nDanish', color='orange', 
+           fontface='bold', size=6) + 
+  annotate(geom='text', x=11.7, y=56.4, label='Insular\nDanish', 
+           color='darkgreen', fontface='bold', size=6) +
+  xlim(8, 13) +
+  ylim(54.7, 58) + 
+  theme_bw() +
+  theme(panel.background=element_rect(fill='lightblue'),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.text.y=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.title.x=element_blank(),
+        axis.ticks=element_blank())
+```
+
+:::
+
+```{r}
+#| message: false
+#| warning: false
+#| label: fig-mapDK
+#| fig-cap: Map showing the areas associated with the two primary Danish dialect groups.
+
+mapDK
+```
+
+
+In Modern Standard Danish (MSD), /p t k/ are voiceless aspirated, and /t/ in particular is prominently affricated [@jespersen1899; @fischerjorgensen1954; @puggaardrode2022_fosr].
+Until relatively recently, the majority of the Danish speech community spoke traditional dialects [@kristiansen2003], but in the past century, rampant standardization has largely led to the levelling of these varieties [@pedersen2003].
+An overt feature of some Jutlandic varieties was the use of a variant of /t/ without salient affrication, which is known colloquially as *tørt t* 'dry t' [@puggaard2021].
+There is no consensus about which Jutlandic varieties lacked affrication.
+Sources have variously claimed that it was missing from all Jutlandic varieties [@brink1975], Northern Jutlandic [@petersen2009], Western Jutlandic [@petersen2021], or all varieties except Eastern Jutlandic [@heger1981].
+We explore this mystery using a large legacy corpus of sociolinguistic interviews which was explicitly recorded to document the traditional language and culture of rural Denmark [@andersen1981; @goldshtein2019].
+These recordings (particularly the ones from Jutland) largely preserve a stage of language variation unaffected by the recent wave of standardization.
+
+The acoustics of alveolar frication and aspiration are well-understood.
+In alveolar frication, a jet of air impinges on a hard surface (the upper front teeth) immediately in front of the coronal constriction, resulting in noise in a broad range of high frequencies (mainly above 4 kHz) [@stevens1993].
+In aspiration, lower frequency turbulence noise in a narrower frequency range (mainly below 1 kHz) is generated at and near the glottis [@stevens1998].
+This noise is filtered through the supraglottal cavity, where the resonance frequencies of the following vowel significantly affect the resulting noise.
+Analyzing how these spectral characteristics vary regionally is not at all straightforward.
+
+Spectral moments are commonly used to decompose spectra generated from aperiodic portions of speech.
+The spectral mean, or *center of gravity* (COG) [@forrest1988], is a particularly popular measure.
+Since spectra rarely resemble Gaussian distributions, the mean frequency alone is not very informative with respect to overall shape; furthermore, studies have found conflicting evidence about which spectral moments (if any) can be used to consistently determine noise sources [@stoelgammon1994; @shadle1996].
+Several other measures have been proposed for decomposing aperiodic spectra [e.g. @jongman2000; @bunnell2004; @koenig2013], but none have been as influential as COG.
+
+For the reasons outlined above, we do not use spectral moments here.
+Instead, we adopt FPCA as an alternative method.
+FPCA is used to determine the main sources of variance in curves without imposing predetermined shapes.
+This makes it particularly suitable for exploratory work.
+Each resulting principal component PC~*i*~ corresponds to a source of variance relative to the average spectral shape, and each individual spectrum gets a score $s_i$ for each PC indicating how well it corresponds to this source of variance.
+These scores can then be fitted to conventional statistical models; here, we fit PC scores to spatial generalized additive mixed models [GAMMs, @wieling2011] in order to test whether any of the variance in spectral shape is geographically determined.
+These models also include a range of phonetic contextual predictors.
+The influence of phonetic contextual predictors largely pattern as predicted, which we take as an indication that FPCA is indeed a suitable tool for decomposing spectra.
+FPCA has previously been used to analyze various time-varying phonetic measures, such as *F*~0~ and formants [@gubian2011; @gubian2015]; to our knowledge, it has not previously been used to analyze speech spectra.
+
+# Methods and materials
+
+## Recordings
+
+Our materials consist of sociolinguistic interviews with elderly speakers of traditional regional varieties recorded between 1971--1976 [@goldshtein2019; @dialektsamlingen].
+Interviews were conducted with informants in 230 parishes in Jutland, of which 213 were used in this study.
+23% of the informants are women.
+Informants' median year of birth is 1896 (range 1871--1927). 
+The geographical distribution of informants can be seen in @fig-locs (which shows the location of Djursland for reference.)
+In spite of the large scope of these recordings, they have not been used for systematic research until very recently [@puggaard2021; @goldshtein2021].
+
+::: {.callout-note collapse="true"}
+## Loading and preprocessing data
+
+Our analysis data is presently spread across four semicolon-separated CSV files, which we'll load in with `read.csv()`.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+coordinates <- read.csv('data/dialect_coordinates.csv', sep=';')
+dia_polygon <- read.csv('data/polygons_dialectareas.csv', sep=';')
+participant_info <- read.csv('data/participant_info.csv', sep=';')
+affric <- read.csv('data/affric.csv', sep=';')
+
+
+```
+
+Let's have a quick look at each of these.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+glimpse(coordinates)
+```
+
+`coordinates` contains geographical coordinates for each of the parishes included in the study (each parish corresponds to one speaker).
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+glimpse(dia_polygon)
+```
+
+`dia_polygon` contains coordinates tracing the traditional dialect areas of Jutland as defined by @skautrup1970. These can be plotted in `ggplot2` with `geom_polygon()`. The dialect areas are not actually used in this study, but I'll use these polygons for all maps below. 
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+glimpse(participant_info)
+```
+`participant_info` contains informant metadata. I'll briefly go over columns that are not self-explanatory.
+
+* `X` is simply an identifier containing row numbers.
+* `parish` is the name of the parish where the informant is from, `parishno` is a numeric identifier for each parish based on @skjelborg1967.
+* `tape_id` is an identifier for each original tape. It can be used to locate the recording in the [Royal Danish Library's dialect collection](https://dansklyd.statsbiblioteket.dk/samling/dialektsamlingen/). The URL for a recording is: `dansklyd.statsbiblioteket.dk/lydoptagelse/?eid=Dialekt_P + id`; i.e. as can be seen `participant_info`, the `tape_id` for the recording from Agerskov is 395, so this recording can be found at [dansklyd.statsbiblioteket.dk/lydoptagelse/?eid=Dialekt_P395](https://dansklyd.statsbiblioteket.dk/lydoptagelse/?eid=Dialekt_P395).
+* `birthyear` is the birth year of the speaker (if available), `year` is the year of recording, and `rec_age` is the age of the speaker at the time of recording. These are not used in the analysis.
+* `dialect` is the traditional dialect area as defined by @skautrup1970 which the speaker belongs to.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+glimpse(affric)
+```
+
+`affric` contains information about each token used for the analysis. Note that this data frame has 10,447 and includes not just tokens of /t/ but also tokens of /p k/. The data frame was used for a larger equivalent study of spectral characteristics of stops in Jutland Danish, which can be found in Chapter 6 of @puggaardrode2023_diss. I'll briefly go over columns that are not self-explanatory.
+
+* `token` is a makeshift phonetic transcription of the syllable where the token comes from. These were used to automatically generate the information in the columns mentioned below, following a procedure outlined in the [DataverseNL repository](https://doi.org/10.34894/JHN1Q7) accompanying @puggaard2021.
+* `cog` contains centre of gravity estimates from [Praat](https://fon.hum.uva.nl/praat). They are not used here.
+* `vot` contains the voice onset time of each stop token.
+* `pal`, `height`, `round`, `stress` correspond to the categorical variables [palatalization, height, roundness, stress]{.smallcaps} discussed below. `backness` contains information about three levels of backness in vowels, which I'll collapse to two levels below. The values for these are mostly formulated in terms of features -- e.g. `negpal` means "no palatalization" and `pal` means "palatalization".
+* `.obs` is a numeric identifier for each token.
+
+I'll make a data frame `df` by joining the data frames `affric`, `participant_info`, and `coordinates`.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+df <- left_join(affric, participant_info) %>%
+  left_join(coordinates)
+```
+
+It was clear from the `glimpse()`s above that several columns are strings when they should be factors, so we'll convert those. We'll also collapse the `backness` variable into two levels instead of the current three levels.
+
+```{r}
+#| code-fold: false
+#| warning: false
+#| message: false
+
+for (col in c(
+  'height', 'round', 'pal', 'stress', 'gender', 'parish', 'backness')){
+  df[[col]] <- as.factor(df[[col]])
+}
+
+df <- df %>%
+  mutate(bkn2l = case_when(
+    backness == 'front' | backness == 'central' ~ 'nbk',
+    TRUE ~ 'bk'
+  )) %>%
+  mutate(bkn2l = as.factor(bkn2l))
+```
+
+:::
+
+::: {.callout-note collapse="true"}
+## Generating the map in @fig-locs
+
+@fig-locs is generated in `ggplot2` by plotting green dots for each of the coordinates in the `coordinates` data frame on top of the outlines of Jutland dialect areas in the `dia_polygon` data frame. I also use `geom_segment()` and `annotate()` to indicate the location of Djursland on the map. `theme()` is used to remove all the regular `ggplot` junk so we just have a blank background and no axes.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+locs_map <- ggplot(coordinates) +
+  aes(x=lat, y=long) +
+  geom_polygon(data=dia_polygon, aes(x=lat, y=long, group=dialect),
+               fill=NA, color='grey', lwd=0.6) +
+  coord_fixed(1.7) +
+  geom_point(size=2.5, alpha=0.5, col='darkgreen') +
+  geom_segment(x=10.4, y=55.6, xend=10.7, yend=56.1, 
+               arrow=arrow(length=unit(0.05, 'npc')), linewidth=1.2,
+               lineend='butt', linejoin='round', col='darkgreen') +
+  annotate('text', label='Djursland', x=10.4, y=55.5, col='darkgreen') +
+  theme(panel.border = element_blank(),
+        panel.background = element_rect(fill = "#FFFFFF", color = "#FFFFFF"),
+        axis.text.y = element_blank(), axis.text.x = element_blank(),
+        axis.title.y = element_blank(), axis.title.x = element_blank(),
+        axis.ticks = element_blank(), legend.background = element_blank(),
+        legend.title = element_blank(), legend.text = element_blank())
+```
+
+:::
+
+```{r}
+#| message: false
+#| warning: false
+#| label: fig-locs
+#| fig-cap: The geographical distribution of recordings used in this study.
+
+locs_map
+```
+
+
+## Acoustic processing
+
+5,169 /t/ releases were manually segmented.
+The release burst and the onset of periodicity were used as delimitation landmarks, as identified from the waveform.
+Using Praat [@boersma2021], 5 ms snippets were extracted from the midpoint of each /t/ release, filtered to include only frequencies between 0.5--12.5 kHz.
+For each of these, multitaper spectra were generated in R [@r2022] following the method described in [@reidy2013].
+Intensity values were log-transformed and standardized in order to keep all spectra on the same scale.
+Measurements at frequencies > 8 kHz were not included in the analysis, as they did not contribute much to the analysis other than noise.
+
+::: {.callout-note collapse="true"}
+## Generating multitaper spectra
+
+Here I'll show how multitaper spectra were generated using two examples -- a relatively non-affricated /t/ token spoken by an [informant from Ansager](https://dansklyd.statsbiblioteket.dk/lydoptagelse/?eid=Dialekt_P1210) and a relatively affricated token spoken by an [informant from Asserballeskov](https://dansklyd.statsbiblioteket.dk/lydoptagelse/?eid=Dialekt_P39).
+
+First I'll load in two WAV files as R objects containing brief sound snippets using the `snd.read()` function from `rPraat`. I store the beginning and end times of the stop releases in the vectors `aff_loc` and `asp_loc`. I then use the base R plotting function to plot and annotate waveforms. Amplitude measures -- which correspond to the audio signal -- are stored as `$sig` in the R objects. 
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+#| fig-height: 5.5
+#| fig-width: 4.5
+
+library(rPraat)
+aff <- snd.read('snd/aff.wav')
+aff_loc <- c(0.111, 0.168)
+mid_aff <- min(aff_loc) + (diff(aff_loc)/2)
+
+asp <- snd.read('snd/asp.wav')
+asp_loc <- c(0.108, 0.158)
+mid_asp <- min(asp_loc) + (diff(asp_loc)/2)
+
+par(mfrow=c(2,1))
+plot(aff$t, aff$sig[,1], type='l', col='red',
+     xlab='Time (s)', ylab='Energy (dB)',
+     ylim=c(-0.21, 0.3))
+abline(v=aff_loc, lwd=2)
+text(x=0.05, y=0.28, labels='a', col='red', font=2)
+text(x=mid_aff, y=0.28, labels='t', col='red', font=2)
+text(x=0.207, y=0.28, labels='i', col='red', font=2)
+
+plot(asp$t, asp$sig[,1], type='l', col='blue',
+     xlab='Time (s)', ylab='Energy (dB)',
+     ylim=c(-0.27, 0.2))
+abline(v=asp_loc, lwd=2)
+text(x=0.03, y=0.18, labels='ə', col='blue', font=2)
+text(x=mid_asp, y=0.18, labels='t', col='blue', font=2)
+text(x=0.2, y=0.18, labels='œ', col='blue', font=2)
+```
+
+Since multitaper spectra were generated from 5 ms snippet at each release midpoint, these are equivalent plots showing just those 5 ms snippets.
+
+```{r}
+#| message: false
+#| warning: false
+#| fig-height: 5.5
+#| fig-width: 4.5
+
+par(mfrow=c(2,1))
+
+plot(aff$t, aff$sig[,1], type='l', col='red',
+     xlab='Time (s)', ylab='Energy (dB)',
+     ylim=c(-0.21, 0.3))
+abline(v=c(mid_aff-0.0025, mid_aff+0.0025), lwd=2)
+text(x=0.05, y=0.28, labels='a', col='red', font=2)
+text(x=mid_aff, y=0.28, labels='t', col='red', font=2)
+text(x=0.207, y=0.28, labels='i', col='red', font=2)
+
+plot(asp$t, asp$sig[,1], type='l', col='blue',
+     xlab='Time (s)', ylab='Energy (dB)',
+     ylim=c(-0.27, 0.2))
+abline(v=c(mid_asp-0.0025, mid_asp+0.0025), lwd=2)
+text(x=0.03, y=0.18, labels='ə', col='blue', font=2)
+text(x=mid_asp, y=0.18, labels='t', col='blue', font=2)
+text(x=0.2, y=0.18, labels='œ', col='blue', font=2)
+```
+
+In order to get a better feel for the difference between multitaper spectra and the more commonly used fast Fourier transformed (FFT) spectra, I'll first generate and visualize equivalent FFT spectral slices. I load in the relevant 5 ms snippets using `snd.read()`. The snippets are downsampled to 25 kHz using the function `resamp()` from the `seewave` package, which takes as arguments a vector corresponding to the sound signal, the original sample rate `f` and the desired sample rate `g`. I generate FFT spectral slices using the function `spectralslice()` from the `phonTools` package, which takes as arguments the signal and sample rate `fs`. `spectralslice()` plots the spectrum by default; I set `show=FALSE` to suppress this and plot the results myself (so I can add color, set flexible axis limits, etc).
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+#| fig-height: 3
+#| fig-width: 4
+
+library(seewave)
+library(phonTools)
+
+aff_mid <- snd.read('snd/aff.wav', 
+                    from=mid_aff-0.0025, to=mid_aff+0.0025, units='seconds')
+sr <- 25000
+aff_mid_25kHz <- resamp(aff_mid$sig, f=aff_mid$fs, g=sr)
+fft <- spectralslice(aff_mid_25kHz[,1], fs=sr, show=F)
+plot(fft[,1], fft[,2], xlab='Frequency (Hz)', ylab='Power (dB)',
+     type='l', col='red', xlim=c(0, 8000))
+abline(v=4000, lwd=2, lty='dashed')
+```
+
+```{r}
+#| message: false
+#| warning: false
+#| fig-height: 3
+#| fig-width: 4
+
+asp_mid <- snd.read('snd/asp.wav', 
+                    from=mid_asp-0.0025, to=mid_asp+0.0025, units='seconds')
+asp_mid_25kHz <- resamp(asp_mid$sig, f=asp_mid$fs, g=sr)
+fft <- spectralslice(asp_mid_25kHz[,1], fs=sr, show=F)
+plot(fft[,1], fft[,2], xlab='Frequency (Hz)', ylab='Power (dB)',
+     type='l', col='blue', xlim=c(0, 8000))
+abline(v=4000, lwd=2, lty='dashed')
+```
+
+Multitaper spectra are generated using the `spec.mtm()` function from the `multitaper` package, which takes as arguments a signal, a frequency bandwidth parameter `nw`, the number of eigenspectra used to compute the spectrum `k`, and `deltat` containing the time difference between adjacent samples in the signal, i.e. 1 divided by our sample rate. I set `nw=4` and `k=8` (i.e. $K = 2nW$) following the suggestions by @reidy2013. `spec.mtm()` also plots the resulting spectrum by default, which I once again suppress with `plot=FALSE`.
+
+In the resulting object, energy is in the $W/m^2$ scale rather than the more familiar decibel scale. In order to achieve a spectrum in a standardized decibel-equivalent scale, I log-transform and subsequently standardize the spectrum object. The results are plotted using the base R plotting function.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+#| fig-height: 3
+#| fig-width: 4
+
+library(multitaper)
+
+mts <- spec.mtm(aff_mid_25kHz, nw=4, k=8, deltat=1/sr, plot=F)
+mts_log <- log(mts$spec)
+mts_std <- (mts_log - mean(mts_log)) / (2 * sd(mts_log))
+plot(mts$freq, mts_std, xlab='Frequency (Hz)', ylab='Power (std.)',
+     type='l', col='red', xlim=c(0, 8000))
+abline(v=4000, lwd=2, lty='dashed')
+```
+
+```{r}
+#| message: false
+#| warning: false
+#| fig-height: 3
+#| fig-width: 4
+
+mts <- spec.mtm(asp_mid_25kHz, nw=4, k=8, deltat=1/sr, plot=F)
+mts_log <- log(mts$spec)
+mts_std <- (mts_log - mean(mts_log)) / (2 * sd(mts_log))
+plot(mts$freq, mts_std, xlab='Frequency (Hz)', ylab='Power (std.)',
+     type='l', col='blue', xlim=c(0, 8000))
+abline(v=4000, lwd=2, lty='dashed')
+```
+
+When I originally did this study, I used a Praat script [available in @disscode] to extract 5 ms snippets and subsequently generated multitaper spectra in R. These are stored in a CSV file which we'll load in as `spectra`. 
+
+```{r}
+#| code-fold: false
+
+spectra <- read.csv('data/yind_log.csv', sep=',')
+glimpse(spectra)
+```
+
+This (rather large!) data frame has three columns:
+
+* `.obs` containing a unique numeric identifier for each spectrum.
+* `.index` containing frequency bins.
+* `.value` containing standardized energy values by frequency bin.
+
+I generated the spectra using a bundle of convenience functions written by Patrick Reidy called [`spectRum`](https://github.com/patrickreidy/spectRum), which I've since moved away from in favor of using the `multitaper` package. If I had done this study now, I would've done it in one fell swoop in R. The annotated code below shows how this particular task could've been done more efficiently, but for the rest of the exposition I'll be using the spectra originally generated in 2022. If you're interested in adapting the code below but aren't sure how, feel free to reach out!
+
+```{r}
+#| code-fold: false
+#| eval: false
+
+textgrids <- list.files(pattern='*.TextGrid') 
+basenames <- unlist(   #get list of file names without extension
+  str_split(textgrids, pattern='[.]'))[seq(1, length(textgrids)*2, 2)]
+
+z <- 0   #generic counter
+
+spectra <- data.frame(parish = NULL, .obs = NULL,   #empty data frame
+                      .index = NULL, .value = NULL)
+
+for (i in basenames) {   #loop over all files
+  tg <- tg.read(paste0(i, '.TextGrid'))   #read in ith TextGrid
+  t_int <- which(str_sub(tg$possg$label, end=1) == 't')   #get all intervals
+  #where the label starts with 't', which in this case is stop releases. 
+  #depends on the tier names in the TextGrid,
+  #this only works because the TGs all have a tier named possg
+  start <- tg$possg$t1[t_int]   #interval start times are stored in $t1
+  end <- tg$possg$t2[t_int]    #end times stored in $t2
+  mid <- start + (end-start)/2   #compute mid times
+  
+  for (j in 1:length(t_int)) {   #loop over intervals starting with t
+    z <- z + 1   #increase counter
+    snd <- snd.read(paste0(i, '.wav'),   #read 5 ms from sound file
+                    from=mid[j] - 0.0025,
+                    to=mid[j] + 0.0025,
+                    units='seconds')
+    sig_mono <- (snd$sig[,1] + snd$sig[,2])/2   #convert stereo signal to mono
+    sig_25kHz <- resamp(sig_mono, f=snd$fs, g=25000)   #downsample to 25kHz
+    mts <- spec.mtm(sig_25kHz, nw=4, k=8,    #generate multitaper spectrum
+                    deltat=1/25000, plot=F)
+    mts_log <- log(mts$spec)   #log transform to get dB-equivalent scale
+    mts_std <- (mts_log - mean(mts_log)) / (2 * sd(mts_log))   #stanardize
+    spectra <- data.frame(   #make data frame called spectra with...
+      parish = rep(i, length(mts_std)),   #name of the parish
+      .obs = rep(z, length(mts_std)),   #unique identifier
+      .index = mts$freq,   #frequency bin from mts object
+      .value = mts_std) %>%   #standardized energy value
+      rbind(spectra)   #...which we combine with the existing spectra df
+  }
+}
+```
+
+
+:::
+
+All statistics were calculated in R [@r2022].
+The package `fdapace` [@fdapace] was used for FPCA.
+Spectra were smoothed using a local linear smoother with parameters set automatically using generalized cross-validation.
+Five PCs are needed to account for 95% of spectral variance.
+We focus on the first three PC~1--3~, which account for 85.9% of the variance.
+
+::: {.callout-note collapse="true"}
+## Running functional PCA
+
+Before we can proceed to running functional PCA a little data manipulation is needed, because right now we just have a data frame `df` with information about tokens of /p t k/ and another data frame with spectra, also from stop releases of all places of articulation. We need to separate out the /t/s in a new data frame with a new numeric identifier. I also remove the frequencies between 500--8000 Hz at this stage.
+
+```{r}
+#| code-fold: false
+#| message: false
+
+t_df <- df %>%
+  filter(stop=='t') %>%
+  mutate(new_id = seq.int(nrow(filter(df, stop=='t'))))
+
+t_spectra <- t_df %>%
+  inner_join(spectra) %>%
+  filter(.index > 500 & .index < 8000) %>%
+  select(new_id, .index, .value) %>%
+  rename(.obs = new_id)
+```
+
+Functional PCA is implemented with the `fdapace` package. There are several packages in R that can do FPCA -- `fdapace` is the one I know best, it's quite flexible and is arguably a lot more user-friendly and stable these days than the well-known `fda` package.
+
+We first use the function `MakeFPCAInputs()` to create an object with the right structure. This function takes as arguments three numeric vectors of the same size, corresponding to the three columns in our `t_spectra` data frame.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+library(fdapace)
+
+t_input <- MakeFPCAInputs(IDs = t_spectra$.obs, 
+                          tVec = t_spectra$.index, 
+                          yVec = t_spectra$.value)
+```
+
+The resulting object contains the lists `Ly` and `Lt` with the index and values, respectively. The actual analysis is done with the `FPCA()` function, which takes the arguments `Ly` and `Lt`. We also pass a list of further arguments, specifying that the results should be plotted, that the spectra should be smoothed `methodMuCovEst = 'smooth'` with parameters estimated using generalized cross-validation `methodBwCov = 'GCV'`. The data are dense, so the default is not to do any smoothing, but since the spectra are quite noisy, results are better when the spectra are smoothed. We also set a 'fraction of variance explained' threshold of 95% `FVEthreshold = 0.95` -- enough principal components should be estimated to explain 95% of variance in the data. There's a [nice vignette](https://cran.r-project.org/web/packages/fdapace/vignettes/fdapaceVig.html) explaining the options of the package in more detail.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+fpca_t <- FPCA(t_input$Ly, t_input$Lt,
+               list(plot = TRUE,
+                    methodMuCovEst = 'smooth',
+                    methodBwCov = 'GCV', 
+                    FVEthreshold = 0.95))
+```
+
+Some nice visualizations are returned which summarize the fit. The design plot confirms that the data are dense, i.e. that the spacing of measurements across the frequency grid ('time grid') is fully predictable. The scree plot shows that we need five PCs to explain 95% of variance, and that the first PC in particular explains more than half of the variance. We also see the estimated mean spectrum ('mean function'), and the shapes of the three first PCs are visualized ('First 3 Eigenfunctions').
+
+`FCPA()` returns a list with a lot of information about the fit. The scores $s_i$ are stored in the matrix `$xiEst`. We take the first three columns of that matrix and store them in `t_df`.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+t_df <- t_df %>% 
+  mutate(fpc1 = fpca_t$xiEst[,1],
+         fcp2 = fpca_t$xiEst[,2],
+         fpc3 = fpca_t$xiEst[,3])
+```
+
+:::
+
+PC scores $s_{1-3}$ served as dependent variables in separate GAMMs with the following maximal structure: $s_i$ ~ [lon,lat + height + stress + sex + back + round + palatalization + vot]{.smallcaps}.
+([height, round, back,]{.smallcaps} and [stress]{.smallcaps} refer to features of the following vowel; [sex]{.smallcaps} refers to the sex of the speaker.)
+Most of these features have been shown to affect spectral shape in MSD stop releases [@puggaardrode2022_fosr].
+There were various phonological palatalization rules in different Jutland Danish varieties [@bennike1898]; we make no distinction between different sources of palatalization.
+All categorical variables are contrast coded [@schad2020]; the [height]{.smallcaps} variable tests two Helmert contrasts, viz. 'high *vs.*  non-high' and 'low *vs.* mid'.
+All other categorical variables are binary and coded with sum contrasts.
+The [vot]{.smallcaps} variable is standardized.
+By-speaker random slopes were included for each variable except [sex]{.smallcaps}.
+The geographical variable [lon,lat]{.smallcaps} is modelled with two-dimensional thin plate regression spline smooths [@wood2003].
+GAMMs were fitted using the package `mgcv` [@wood2022].
+The packages `itsadug` [@itsadug] and `mgcViz` [@fasiolo2020] were used for health checks and visualizations of the models.
+
+::: {.callout-note collapse="true"}
+## Coding contrasts
+
+By default, categorical variables in R are coded with treatment contrasts. We can check this with the function `contrasts()`:
+
+```{r}
+#| code-fold: false
+
+contrasts(t_df$round)
+```
+
+We get the same matrix if we run `contr.treatment()` to get treatment contrasts for a variable with 2 levels:
+
+```{r}
+#| code-fold: false
+
+contr.treatment(2)
+```
+
+We can override this default by simply assigning another matrix of the right size to `contrasts(t_df$round)`. We could generate this matrix with `contr.sum()`, but sometimes it's nicer to generate them by hand -- then you are free to name your contrasts and to order them in a way that matches your theory.
+
+I set sum contrasts for the `round` variable like this:
+
+```{r}
+#| code-fold: false
+
+contrast <- cbind(c(-0.5,+0.5))
+colnames(contrast) <- "-nrd+rd"
+contrasts(t_df$round) <- contrast
+contrasts(t_df$round)
+```
+
+This matrix is *not* identical to the output of `contr.sum()`:
+
+```{r}
+#| code-fold: false
+
+contr.sum(n=2)
+```
+
+But it's similar in all the important ways (the contrasts are orthogonal and zero-centered). I'll reuse this matrix for the other binary variables.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+colnames(contrast) <- "-bk+nbk"
+contrasts(t_df$bkn2l) <- contrast
+
+colnames(contrast) <- "-npl+pl"
+contrasts(t_df$pal) <- contrast
+
+colnames(contrast) <- "-nst+st"
+contrasts(t_df$stress) <- contrast
+
+colnames(contrast) <- "-f+m"
+contrasts(t_df$gender) <- contrast
+```
+
+We set Helmert contrasts for the three-level variable [height]{.smallcaps}. This procedure is similar, but requires a 3x2 matrix instead of a 2x1 matrix. This should be functionally equivalent to the output of `contr.helmert(n=3)`.
+
+```{r}
+#| code-fold: false
+
+contrast <- cbind(c(+2/3, -1/3, -1/3), c(0, -0.5, +0.5))
+colnames(contrast) <- c("-ml+h", "-l+m")
+contrasts(t_df$height) <- contrast
+```
+
+:::
+
+The source material is spontaneous speech, so the data are rather imbalanced:
+41.9% of /t/ tokens were followed by non-high vowels, of which 15.5% were low. 
+34% of tokens were found in stressed syllables.
+11.6% of tokens were followed by back vowels, and 22.9% were followed by rounded vowels.
+Only 2.5% of the tokens were palatalized.
+
+::: {.callout-note collapse="true"}
+## Imbalances in the data
+
+```{r}
+height_prop <- table(t_df$height) / nrow(t_df)
+str_prop <- table(t_df$stress) / nrow(t_df)
+bk_prop <- table(t_df$bkn2l) / nrow(t_df)
+rd_prop <- table(t_df$round) / nrow(t_df)
+pal_prop <- table(t_df$pal) / nrow(t_df)
+
+props <- data.frame(
+  Level = c('High', 'Low', 'Mid', 'Unstressed', 'Stressed',
+            'Back', 'Non-back', 'Unrounded', 'Rounded',
+            'Non-palatalized', 'Palatalized'),
+  Proportion = paste0(round(c(
+    height_prop, str_prop, bk_prop, rd_prop, pal_prop
+    )*100, 1), '%'))
+rownames(props) <- NULL
+props
+```
+
+:::
+
+We used a step-up model selection procedure, adding variables in the order given above [based on these variables' influence on MSD /t/ release spectra, @puggaardrode2022_fosr].
+Variables were only kept if the cost of fitting a more complex model was sufficiently outweighed by an improved model fit, as determined with likelihood ratio tests [@vanrij2016].
+Data and annotated analysis code are available online [@disscode].
+More details of the study are available in my dissertation [@puggaardrode2023_diss].
+
+::: {.callout-note collapse="true"}
+## Fitting GAMMs
+
+Here, I simply show the code used to fit the GAMMs that are actually reported in the paper, i.e. I do not go over the model selection procedure or likelihood ratio testing. This is covered in more detail in @disscode. This decision is in large part because my *ICPhS* presentation focuses on other ways of determining the magnitude of the geographical effect in particular. Rather than becoming bogged down with the best way of determining a global $p$-value for smooth effects, I want to focus more on where on the grid the smooth effect is particularly stable and where it isn't. 
+
+Models are fitted with the `bam()` function for large GAMMs from the `mgcv` package. A separate model with a unique structure is fitted for each of the three most influential PCs. The syntax for the parametric part of the model is similar to linear models fitted with `lm()` or `lmer()`. The geographical effect is a two-dimensional smooth term `s(lat,long)`, which use the thin plate regression spline basis as default (equivalent to specifying `bs='tp'`). Random intercepts and slopes are also fitted using the `s()` syntax for smooth terms, specifying `bs='re'` as the 'smoothing basis'. `discrete=TRUE` tells `bam()` to use discretized values for covariates, which should not have a major impact on the results but which will greatly speed up the process. A standardized VOT variable `st_vot` is created on the fly when necessary. `nthreads=10` tells `bam()` to do parallel computation using 10 cores; if available, assigning a suitable number of cores can greatly speed up the process. `control=list(trace=TRUE))` will print some messages in the console as the model is running so it's easier to keep track of the progress.
+
+Note that only the $s_1$ model actually has a non-linear component, so the $s_{2-3}$ models could've just as easily been fitted with e.g. `lmer()`. 
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+#| eval: false
+
+library(mgcv)
+
+gam_pc1 <- mgcv::bam(fpc1 ~ height + gender + bkn2l + round + pal + st_vot +
+                       s(lat,long) +
+                       s(parish, bs='re') +
+                       s(parish, by=st_vot, bs='re') +
+                       s(parish, by=height, bs='re') +
+                       s(parish, by=round, bs='re') +
+                       s(parish, by=bkn2l, bs='re') +
+                       s(parish, by=pal, bs='re'), 
+                     data = t_df %>% 
+                       mutate(st_vot = (vot - mean(vot)) / (2 * sd(vot))), 
+                     discrete=TRUE,
+                     nthreads=10,
+                     control=list(trace=TRUE))
+
+gam_pc2 <- mgcv::bam(fcp2 ~ height + stress + bkn2l + round +
+                       s(parish, bs='re') +
+                       s(parish, by=height, bs='re') +
+                       s(parish, by=round, bs='re') +
+                       s(parish, by=stress, bs='re') +
+                       s(parish, by=bkn2l, bs='re'), 
+                     data = t_df,
+                     discrete=TRUE,
+                     nthreads=10,
+                     control=list(trace=TRUE))
+
+gam_pc3 <- mgcv::bam(fpc3 ~ height + stress + gender + 
+                       bkn2l + round + pal + st_vot +
+                       s(parish, bs='re') +
+                       s(parish, by=st_vot, bs='re') +
+                       s(parish, by=height, bs='re') +
+                       s(parish, by=round, bs='re') +
+                       s(parish, by=stress, bs='re') +
+                       s(parish, by=bkn2l, bs='re') +
+                       s(parish, by=pal, bs='re'), 
+                     data = t_df %>% 
+                       mutate(st_vot = (vot - mean(vot)) / (2 * sd(vot))), 
+                     discrete=TRUE,
+                     nthreads=10,
+                     control=list(trace=TRUE))
+```
+
+The models were fitted on the Linux server available at the IPS. I'll simply load them in here. I load them in for the purpose of this document, but you won't find the models on GitHub because the files are too large to store there. You should get the same results if you rerun the GAMMs (although it takes a while), or simply reach out if you want to look at exactly these model objects and I'll figure out a way to share them.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+load('mods/gam_pc1.Rda')
+load('mods/gam_pc2.Rda')
+load('mods/gam_pc3.Rda')
+```
+
+:::
+
+::: {.callout-note collapse="true"}
+## Residual plots
+This is a convenience function for making plots showing the distribution of the models' residuals -- one plot comparing the distribution to a Gaussian distribution with the same mean and standard deviation, and a QQ plot. This function should be general enough for work with any GAMM fitted with `mgcv`. (You get roughly equivalent but undeniably uglier plots with the `mgcv` function `gam.check()`).
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+resid_plot <- function(mod) {
+  resid <- mod[['residuals']]
+  m <- mean(resid)
+  s <- sd(resid)
+  
+  normdist <- ggplot(data.frame(resid)) + 
+    aes(x=resid) +
+    geom_histogram(aes(y=..density..), bins=24) +
+    stat_function(fun=dnorm,
+                  args=list(mean=m, sd=s),
+                  color='green', lwd=1) +
+    ggtitle('Comparison with normal distribution') +
+    xlab('Residuals')
+  
+  qqpl <- ggplot() +
+    aes(sample=resid) +
+    stat_qq() +
+    stat_qq_line(color='orange', lwd=1) +
+    ggtitle('QQ plot') +
+    xlab('Theoretical quantiles') + ylab('Samples')
+  
+  gridExtra::grid.arrange(normdist, qqpl, ncol=2)
+}
+```
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+#| fig-height: 3
+#| fig-width: 6.5
+#| fig-align: center
+
+gam_pc1 %>% resid_plot
+```
+
+The residuals from the $s_1$ model are reasonably normally distributed.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+#| fig-height: 4
+#| fig-width: 6
+#| fig-align: center
+
+gam_pc2 %>% resid_plot
+```
+
+The residuals from the $s_2$ model are quite left skewed.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+#| fig-height: 4
+#| fig-width: 6
+#| fig-align: center
+
+gam_pc3 %>% resid_plot
+```
+
+There's also some left skew to the residuals from the $s_3$ model, but not as systematically as in the $s_2$ model -- here it seems to mostly be the result of some outliers. 
+
+There may be ways of fiddling around with the $s_{2-3}$ models to get nicer residual distributions, such as telling `bam()` to assume non-Gaussian error distributions, but a drawback of these is that they are less well-understood. Since my main focus here is the $s_1$ model, I'll leave the $s_{2-3}$ models as they are.
+
+:::
+
+# Results
+
+PC~1~ accounts for 58.4% of spectral variance, PC~2~ accounts for 18.2%, and PC~3~ accounts for 9.3%.
+The variance explained by PC~1--3~ is visualized in @fig-fpcs. 
+The plots all show the mean spectrum and the shape of the mean spectrum when weighted by the first and third quantile of all PC scores. 
+This gives an indication of what spectra with a relatively high score $s_i$ and a relatively low $s_i$ look like. 
+
+::: {.callout-note collapse="true"}
+## Convenience functions for visualizing functional PCs
+
+Here I'll present a convenience function for visualizing principal shapes in a way that I think is very useful for interpreting them. It plots the mean spectrum -- available in the object returned by `FPCA()` as `$mu` -- as well as the shape of a 'relatively low score' in red and a 'relatively high score' in blue. This is achieved by respectively weighing the mean spectral shape by the first and third quantile of $s_i$. PCs, i.e. principal shapes, are stored as a matrix `$phi` in the object returned by `FPCA()`, each column corresponding to a numeric vector over an observation grid stored in `$obsGrid`, which in our case corresponds to a frequency range between 500--8000 Hz. Plotting these is straightforward. Here is the first PC:
+
+```{r}
+#| code-fold: false
+#| warning: false
+#| message: false
+#| fig-height: 4
+#| fig-width: 5
+#| fig-align: center
+
+plot(x=fpca_t$obsGrid, y=fpca_t$phi[,1], type='l', 
+     ylab='', xlab='Frequency (Hz)')
+```
+
+If we want to show how a very high score $s_1 = 30$ affects spectral shape, we can weigh the mean spectrum by $30\phi_1$ like so:
+
+```{r}
+#| code-fold: false
+
+very_high_s1 <- fpca_t$mu + 30*fpca_t$phi[,1]
+```
+
+Plotted here with the mean spectrum as a dotted line for reference:
+
+```{r}
+#| code-fold: false
+#| warning: false
+#| message: false
+#| fig-height: 4
+#| fig-width: 5
+#| fig-align: center
+
+plot(x=fpca_t$obsGrid, y=very_high_s1, type='l', 
+     ylab='', xlab='Frequency (Hz)')
+lines(x=fpca_t$obsGrid, y=fpca_t$mu, lty='dotted')
+text(x=4000, y=0.9, labels=expression(Spectrum~with~very~high~s[1]))
+text(x=6500, y=0.3, labels='Mean spectrum')
+```
+
+Now -- back to the convenience function, which takes the arguments `fpca_obj`, an object returned by `FPCA()`, the number of the PC to plot `fpc`, and a plot title `title`. It should be simple enough to change for other purposes, but for now the axis and legend labels make it suitable for spectra.
+
+```{r}
+#| code-fold: false
+#| message: false
+#| warning: false
+
+fpc_viz <- function(fpca_obj, fpc, title){
+  plt <- data.frame(bin = fpca_obj$obsGrid, mu = fpca_obj$mu,
+                     highq = fpca_obj$mu +
+                       quantile(fpca_obj$xiEst[,fpc])[2] *
+                       fpca_obj$phi[,fpc],
+                     lowq = fpca_obj$mu +
+                       quantile(fpca_obj$xiEst[,fpc])[4] *
+                       fpca_obj$phi[,fpc]) %>% 
+    pivot_longer(cols=c(mu, highq, lowq)) %>%
+    ggplot(aes(bin, value, color=name)) +
+    geom_line(lwd=1.5) +
+    theme_minimal() +
+    xlab('Frequency (Hz.)') + ylab('Amplitude (std.)') + 
+    scale_color_manual(values=c('red', 'blue', 'grey'),
+                       name = element_blank(),
+                       labels = c('Low', 'High', 'Mean\nspectrum'))
+  return(plt)
+}
+```
+
+:::
+
+```{r}
+#| message: false
+#| warning: false
+#| label: fig-fpcs
+#| fig-cap: Variance in release spectra captured by PC~1--3~ and the effect of weighting the mean by high and low scores $s_{1-3}$.
+#| fig-height: 8
+#| fig-width: 4
+#| fig-align: center
+
+library(gridExtra)
+grid.arrange(
+  fpca_t %>% fpc_viz(1) + ggtitle(bquote(PC[1])) + ylim(-0.35, 0.75),
+  fpca_t %>% fpc_viz(2) + ggtitle(bquote(PC[2])) + ylim(-0.35, 0.75),
+  fpca_t %>% fpc_viz(3) + ggtitle(bquote(PC[3])) + ylim(-0.35, 0.75),
+  nrow=3, ncol=1
+)
+```
+
+
+The average spectrum has little energy below 1.5 kHz, relatively high amplitude at frequencies between 1.5--4.5 kHz, gradual energy loss above that, and peaks just below 2.5 kHz. 
+The main source of variance, captured by PC~1~, is the location and magnitude of the primary peak.
+Positive $s_1$ corresponds to a lower frequency peak, and generally more energy at lower frequencies.
+COG would likely have captured some of the same information as PC~1~, but they are not equivalent: in addition to the location of the peak, PC~1~ also captures information about variance in spectral slope, peak amplitude, and skew.
+Given what we know about aspiration and alveolar frication, strong negative $s_1$ seems to represent an alveolar noise source, and strong positive $s_1$ seems to represent a glottal noise source.
+PC~2~ captures variance in the magnitude of the main peak.
+Positive $s_2$ corresponds to a more prominent peak, and less energy at higher frequencies, while negative $s_2$ corresponds to a less prominent peak, and more energy at higher frequencies.
+PC~3~ mostly captures information about the peakedness of the energy distribution.
+Positive $s_3$ corresponds to a more restricted and more prominent peak in the same location as in the mean spectrum, and negative $s_3$ corresponds to a broader distribution of energy.
+
+The GAMM modelling $s_1$ was fitted with all candidate independent variables except [stress]{.smallcaps}. 
+This model has a medium strong effect size of $R^2 = .39$. 
+A likelihood ratio test found that a model including the geographical variable [lon,lat]{.smallcaps} performed significantly better than a nested model without this variable, with $\chi^2(3) = 4.1$, $p=0.043$. 
+The influence of the geographical variable is plotted on a map in @fig-gam-fit; @fig-gam-fit shows that negative $s_1$ is common in Djursland and the surrounding area in mid-eastern Jutland (see @fig-locs); we return to this below.
+All other variables also significantly influence $s_1$ (see @tbl-gam-summary).
+The upshot is that there is less energy at high frequencies before non-high, particularly low, vowels; before rounded vowels; before back vowels; in non-palatalized releases; and in tokens from male speakers.
+Finally, there is an inverse relationship between VOT and $s_1$, such that shorter VOT corresponds to higher $s_1$.
+These are all expected patterns, similar to what is found in MSD [@puggaardrode2022_fosr].
+
+```{r}
+#| label: tbl-gam-summary
+#| tbl-cap: Parametric coefficients of GAMM modeling $s_1$.
+#| tbl-colwidths: "[40,15,15,15,15]"
+#| message: false
+#| warning: false
+
+library(mgcv)
+
+gam_pc1_summary <- summary(gam_pc1, re.test=F)
+len <- length(gam_pc1_summary$p.coef)
+var <- c('intercept', 
+         '[height]{.smallcaps}: - non-high, + high',
+         '[height]{.smallcaps}: - low, + mid',
+         '[sex]{.smallcaps}: - female, + male',
+         '[backness]{.smallcaps}: - back, + non-back',
+         '[round]{.smallcaps}: - non-round, + round',
+         '[palatalization]{.smallcaps}: - non-pal., + pal.',
+         '[VOT]{.smallcaps}'
+)
+
+est <- format(round(gam_pc1_summary$p.coef, 2))
+se <- format(round(gam_pc1_summary$se[1:len], 2))
+t <- format(round(gam_pc1_summary$p.t, 2))
+p <- round(gam_pc1_summary$p.pv, 3)
+
+p[which(p < 0.001)] <- '<.001'
+gam_pc1_table <- data.frame(
+  Variable = var,
+  Estimate = est,
+  se = se,
+  t = t,
+  p = p
+)
+
+rownames(gam_pc1_table) <- NULL
+colnames(gam_pc1_table)[3] <- '$SE$'
+colnames(gam_pc1_table)[4] <- '$t$-value'
+colnames(gam_pc1_table)[5] <- '$p$-value'
+
+gam_pc1_table
+```
+
+
+::: {.callout-note collapse="true"}
+## `mgcv` summary of $s_1$ model
+
+In case you want to have a closer look at the model summary.
+
+```{r}
+#| message: false
+#| warning: false
+
+summary(gam_pc1, re.test=F)
+```
+
+:::
+
+::: {.callout-note collapse="true"}
+## Overlaying GAMM fits on maps
+
+I use some home-cooked functions for overlaying the model results on a map of Jutland, which I'll quickly introduce here. These functions are adapted in part from the `mgcViz` package [@fasiolo2020; -@fasiolo2021], in particular the `l_fitRaster()` function, and the helper functions published along with @bauer2018 in the developmental package `FoSIntro`, in particular the `plot_2Dheatmap()` function.
+
+The function `gam_map_extract_fit()` returns the data frame used to plot the heat maps. It takes four arguments:
+
+* `mod` is the fitted model object
+* `select` is an identifier for the smooth variable to be plotted corresponding to the order of variables fitted with `s()` in the model call. Default is `1`.
+* `ci` are confidence intervals to be returned as a percentage. Default is `NULL`, which is equivalent to `95`, and returns upper and lower 95% confidence intervals. (I don't use those here, but I do in another forthcoming paper).
+* `sig_level` is the significance level of interest. Default is `1`, which means that all fitted values are plotted. The plot will be white in areas where the $p$-value is below `sig_level`.
+
+It works like this: A vector of fitted values and standard errors corresponding to evenly spaced coordinates are extracted from the model fit using the `mgcv` function `plot.gam()` and converted into a data frame. Using the fitted values and standard errors, columns are added with a $p$-value for each coordinate, a Boolean column `alpha` stating whether that $p$-level is below the `sig_level` threshold, and for lower and upper confidence interval bounds.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+gam_map_extract_fit <- function(mod, select=1, ci=NULL, sig_level=1) {
+  png('tmp')   #suppress actual plot
+  plot.df <- mgcv::plot.gam(mod, select=1, rug=F)
+  dev.off()
+  unlink('tmp', recursive=T)
+  plot.df <- lapply(plot.df, function(x) {
+    x$raw <- NULL   #remove large and (for our purposes) unneccesary raw component
+    x
+  })
+  plot.df <- plot.df[[select]]   #limit to the right smooth effect
+  plot_data <- expand.grid(plot.df$x, plot.df$y)
+  plot_data$fit <- as.vector(plot.df$fit)
+  plot_data$se <- as.vector(plot.df$se)
+  plot_data$p <- 1 - pnorm(abs(plot_data$fit)/plot_data$se)
+  plot_data$alpha <- plot_data$p < sig_level
+  
+  if (is.null(ci)) {ci <- 95}
+  
+  cip <- 1-ci/100
+  plot_data$ci_lower <- plot_data$fit - qnorm(1-cip/2)*plot_data$se
+  plot_data$ci_upper <- plot_data$fit + qnorm(1-cip/2)*plot_data$se
+  
+  return(plot_data)
+}
+```
+
+The function `gam_map()` produces the actual plot. It calls `gam_map_extract_fit()` under the hood with supplied values. It further takes the obligatory argument `poly_obj` which is a data frame containing information for plotting the map as a polygon. The argument `fill` clarifies which value to plot; default is the model fit `'fit'`, but other options are `'p'` for plotting $p$-values by coordinates, `'se'` for plotting standard errors by coordinates, and `'ci_lower'` and `'ci_upper'` for plotting lower and upper CI boundaries (see further below). The argument `legend_name` is the string to print above the legend.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+gam_map <- function(mod, poly_obj, select=1, sig_level=1, fill='fit', 
+                    legend_name='estimate', ...) {
+  p <- gam_map_extract_fit(mod, select, sig_level=sig_level)
+  ggplot(p, aes_string(x='Var1', y='Var2', fill = fill)) + 
+    geom_tile(alpha = p$alpha) +
+    scale_x_continuous(expand = c(0,0)) + 
+    scale_y_continuous(expand = c(0,0)) +
+    scale_fill_gradient2(low = 'red', mid = 'white', high = 'blue', 
+                         na.value='grey',
+                         name = legend_name, ...) +
+    coord_fixed(1.7) +   #needed for map to have proper dimensions
+    geom_polygon(data=poly_obj, aes(x=lat, y=long, group=dialect),
+                 fill=NA, color='black', inherit.aes=F, lwd=0.7) + 
+    theme_bw() +
+    theme(panel.border=element_blank(),
+          panel.grid.major=element_blank(),
+          panel.grid.minor=element_blank(),
+          axis.text.y=element_blank(),
+          axis.text.x=element_blank(),
+          axis.title.y=element_blank(),
+          axis.title.x=element_blank(),
+          axis.ticks=element_blank())
+}
+```
+
+These functions should in theory be quite adaptable, but I haven't tested them with other map polygons so issues may well pop up. Feel free to reach out if you want to use them but can't for some reason, I'd be happy to have a look.
+
+:::
+
+```{r}
+#| message: false
+#| warning: false
+#| label: fig-gam-fit
+#| fig-cap: Fitted $s_1$ values attributable to area.
+
+dia_gam_fit <- gam_map(gam_pc1, dia_polygon)
+dia_gam_fit
+```
+
+::: {.callout-note collapse="true"}
+## The stability of the geographical effects
+
+For a closer look at the geographical effect, let's have a look at versions of @fig-gam-fit which are only colored in when the $p$-value is above a certain threshold.
+
+```{r}
+gam_map(gam_pc1, dia_polygon, sig_level = 0.05) +
+  ggtitle('Colored where p < 0.05')
+```
+
+What we see is that the geographical effect is largely unstable and not significant; with a significance threshold of $p<0.05$, (almost) only an area in central eastern Jutland is shown as having significantly lower $s_1$ than the rest of the peninsula.
+
+```{r}
+gam_map(gam_pc1, dia_polygon, sig_level = 0.01) +
+  ggtitle('Colored where p < 0.01')
+```
+
+With a significance threshold of $p<0.01$, the effect is really neatly limited to the peninsula of Djursland.
+
+:::
+
+::: {.callout-note collapse="true"}
+## Reconstructing spectra from FPCA and GAMM fits
+
+I showed above how to plot the influence of PC scores relative to the mean. It's worth having a look at the magnitude of the geographical effects in terms of principal shapes. In @fig-gam-fit, we can see that the area with the highest fitted $s_1$ has an estimated score of about 2, and the lowest fitted $s_1$ is estimated around -6. Recall though that smooth effects in GAMMs fitted with `mgcv` are always zero-centered, so these numbers must be interpreted relative to the model's intercept of -1.46 (see @tbl-gam-summary); in other words, the highest fitted geographical effect is actually very close to zero (the mean spectrum computed with `FPCA()`), and the lowest fitted effect is closer to -8. 
+
+I saved the `ggplot` object used to plot @fig-gam-fit above as `dia_gam_fit`, so we can extract the exact minima and maxima from the plot legend from that and add the intercept to get actual predicted $s_1$ values for different areas on the map. These `ggplot` objects have a confusing structure, but the values used to color in the individual pixels on the plot are all stored in `$plot_env$p$fit`. Here's the highest fitted $s_1$ on the @fig-gam-fit legend:
+
+```{r}
+#| code-fold: false
+#| warning: false
+#| message: false
+#| fig-height: 4
+#| fig-width: 6
+#| fig-align: center
+
+high_pc1 <- dia_gam_fit$plot_env$p$fit %>% max(na.rm=T) +
+  gam_pc1$coefficients['(Intercept)']
+
+data.frame(bin = fpca_t$obsGrid, mu = fpca_t$mu,
+           high_pc1 = fpca_t$mu + high_pc1 * fpca_t$phi[,1]) %>% 
+  pivot_longer(cols=c(mu, high_pc1)) %>% 
+  ggplot(aes(bin, value, color=name)) +
+  geom_line(lwd=1.5) +
+  theme_minimal() +
+  xlab('Frequency (Hz.)') + ylab('Amplitude (std.)') +
+  scale_color_manual(values=c('blue', 'grey'),
+                     name=element_blank(),
+                     labels=c(bquote(High~s[1]),
+                              'Mean\nspectrum'))
+```
+
+It's basically indistinguishable from the mean spectrum. Here's the lowest fitted $s_1$:
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-height: 4
+#| fig-width: 6
+#| fig-align: center
+
+low_pc1 <- dia_gam_fit$plot_env$p$fit %>% min(na.rm=T) +
+  gam_pc1$coefficients['(Intercept)']
+
+data.frame(bin = fpca_t$obsGrid, mu = fpca_t$mu,
+           low_pc1 = fpca_t$mu + low_pc1 * fpca_t$phi[,1]) %>% 
+  pivot_longer(cols=c(mu, low_pc1)) %>% 
+  ggplot(aes(bin, value, color=name)) +
+  geom_line(lwd=1.5) +
+  theme_minimal() +
+  xlab('Frequency (Hz.)') + ylab('Amplitude (std.)') +
+  scale_color_manual(values=c('red', 'grey'),
+                     name=element_blank(),
+                     labels=c(bquote(Low~s[1]),
+                              'Mean\nspectrum'))
+```
+
+Much more of an interpretable difference in shape here.
+
+:::
+
+::: {.callout-note collapse="true"}
+## Exploring random effects from the $s_1$ model
+
+In addition to just looking at the predicted effect of `s(lat,long)`, it'd be nice to have a look at speaker-specific properties as well. All coefficients of the model are stored in the `$coefficients` component of the object returned by `bam()`. We can grab the random intercepts by simply filtering the `$coefficients` to rows called something starting with `s(parish).`, since `parish` is the name of our random intercept. We have the coordinates associated with different parishes in the `coordinates` data frame, so we can use this information to create a map similar to @fig-locs where the dots are colored in according to the predicted by-speaker intercept. 
+
+```{r}
+#| code-fold: false
+#| warning: false
+#| message: false
+
+re_names <- gam_pc1$model$parish %>% levels()
+coefs <- gam_pc1$coefficients
+re_coefs <- coefs[which(str_sub(names(coefs), end=10) == 's(parish).')]
+
+data.frame(parish = re_names,
+           coefs = re_coefs) %>% 
+  left_join(coordinates) %>% 
+  ggplot() +
+  aes(x=lat, y=long, color=coefs) +
+  geom_polygon(data=dia_polygon, aes(x=lat, y=long, group=dialect),
+               fill='lightgrey', color='grey', lwd=0.6) +
+  coord_fixed(1.7) +
+  geom_point(size=2.5) +
+  scale_color_gradient2(low='red', mid='white', high='blue',
+                        name='Random\nintercepts') +
+  theme_bw() +
+  theme(panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.text.y=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.title.x=element_blank(),
+        axis.ticks=element_blank())
+```
+
+This is very interesting -- there's obviously a lot of random by-speaker variation, although perhaps a slight tendency in favor of individuals with lower $s_1$ scores in the south and higher $s_1$ scores in the north. This isn't what the `s(lat,long)` smooth shows, but seems to be in line with a lot of Danish speakers' intuitions.
+
+:::
+
+Fewer variables contribute to the GAMM modeling $s_2$: [height, round, stress]{.smallcaps}, and [backness]{.smallcaps}.
+The geographical variable [lon,lat]{.smallcaps} does not significantly improve the fit of this model.
+The final model has a medium effect size, with $R^2 = .29$. 
+Only two variables significantly influence $s_2$, namely [back]{.smallcaps} with $\hat{\beta} = 1.97$, $SE = 0.7$, $t = 2.82$, $p < .01$, and [round]{.smallcaps} with $\hat{\beta} = 2.21$, $SE = 0.61$, $t = 3.6$, $p < .001$.
+In other words, positive $s_2$, associated with an especially prominent energy peak around 2.5 kHz, is especially found before non-back and non-round vowels.
+This is also in line with previous findings for MSD [@puggaardrode2022_fosr].
+
+::: {.callout-note collapse="true"}
+## `mgcv` summary of $s_2$ model
+
+```{r}
+#| message: false
+#| warning: false
+
+summary(gam_pc2, re.test=F)
+```
+
+:::
+
+All parametric candidate variables contribute to the GAMM modeling $s_3$; the geographical variable does not significantly improve the fit of this model. 
+The resulting model has a medium small effect size of $R^2 = .25$. 
+The only variable found to significantly influence $s_3$ is [round]{.smallcaps}, with $\hat{\beta} = 2.62$, $SE = 0.45$, $t = -5.84$,  $p < .001$.
+
+::: {.callout-note collapse="true"}
+## `mgcv` summary of $s_3$ model
+
+```{r}
+#| message: false
+#| warning: false
+
+summary(gam_pc3, re.test=F)
+```
+
+:::
+
+# Discussion and conclusions
+
+Spectral shapes that suggest a coronal noise source are found in /t/ release midpoints in the varieties of eastern Jutland, particularly in Djursland, but not in other traditional varieties of Jutland Danish. 
+This suggests that /t/ affrication was not historically a feature of most varieties of Jutland Danish.
+
+Indeed, it is possible that /t/ affrication was not a feature of any traditional Jutlandic varieties.
+Southern Djursland coincides with the main water route between Jutland and the island of Zealand, which is where the capital (Copenhagen) and consequently the locus of Standard Danish is located.
+This is also where the largest city of Jutland (Aarhus) is located, and several of the major historical cities of Jutland are located immediately south of Aarhus [@puggaard2021].
+Affrication may be a traditional feature of this area, but the feature may also have spread early from Standard Danish to Aarhus and from there to adjacent rural areas.
+This would be in line with the *cascade model* of interdialectal influence [@labov2003], which predicts that change spreads between population centers in a manner that is predictable from a combination of population size and geographical distance, thus also affecting rural areas close to major cities relatively early.
+
+PC~1~ capture the two most readily interpretable sources of variance in the release midpoint spectra: the location and relative magnitude of the energy peak.
+PC~1~ seems to largely capture the difference between aspiration and affrication noise, which is modulated by both geography and phonetic context; lower PCs seem to capture effects of coarticulation, and these do not differ substantially across regional varieties.
+The influence of phonetic context on PC~1--2~ is largely predictable, and is similar to what has been shown for MSD [@puggaardrode2022_fosr]; for example, the main peak is usually found at higher frequencies before high, non-back, and non-round vowels, in palatalized tokens, in stressed syllables, and in female speakers.
+The fact that these contextual phonetic effects all behave as expected are an indication that FPCA can indeed be fruitfully used to decompose variance in spectral characteristics.
+A possible venue to explore in future research would be using FPCA to decompose variance in the trajectories of spectral measures over the time course of stop bursts and releases.
+
+::: {.callout-note collapse="true"}
+## Session info
+
+Note that the GAMMs were fitted on the IPS server with a slightly newer version of `mgcv` (1.8.42). It shouldn't have any effect on the results though.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: false
+
+sessionInfo()
+```
+
+:::
+
+# References {.unnumbered}
