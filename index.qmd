@@ -828,8 +828,8 @@ The residuals from the $s_1$ model are reasonably normally distributed.
 #| message: false
 #| warning: false
 #| code-fold: false
-#| fig-height: 4
-#| fig-width: 6
+#| fig-height: 3
+#| fig-width: 6.5
 #| fig-align: center
 
 gam_pc2 %>% resid_plot
@@ -841,8 +841,8 @@ The residuals from the $s_2$ model are quite left skewed.
 #| message: false
 #| warning: false
 #| code-fold: false
-#| fig-height: 4
-#| fig-width: 6
+#| fig-height: 3
+#| fig-width: 6.5
 #| fig-align: center
 
 gam_pc3 %>% resid_plot
