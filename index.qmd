@@ -796,7 +796,7 @@ resid_plot <- function(mod) {
     geom_histogram(aes(y=..density..), bins=24) +
     stat_function(fun=dnorm,
                   args=list(mean=m, sd=s),
-                  color='green', lwd=1) +
+                  color='orange', lwd=1) +
     ggtitle('Comparison with normal distribution') +
     xlab('Residuals')
   
@@ -899,7 +899,7 @@ Plotted here with the mean spectrum as a dotted line for reference:
 plot(x=fpca_t$obsGrid, y=very_high_s1, type='l', 
      ylab='', xlab='Frequency (Hz)')
 lines(x=fpca_t$obsGrid, y=fpca_t$mu, lty='dotted')
-text(x=4000, y=0.9, labels=expression(Spectrum~with~very~high~s[1]))
+text(x=4200, y=0.9, labels=expression(Spectrum~with~very~high~s[1]))
 text(x=6500, y=0.3, labels='Mean spectrum')
 ```
 
